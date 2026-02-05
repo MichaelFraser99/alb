@@ -99,6 +99,17 @@ type response struct {
 	BodyEncoded       bool                `json:"isBase64Encoded"`
 }
 
+func (r *response) SetHeaders(req *request, res *http.Response) {
+	if req.MultiValueHeaders == nil {
+		r.Headers = make(map[string]string, len(res.Header))
+		for k, vv := range res.Header {
+			r.Headers[k] = strings.Join(vv, ",")
+		}
+	} else {
+		r.MultiValueHeaders = res.Header
+	}
+}
+
 type lambdaHandler struct {
 	handler http.Handler
 }
@@ -141,11 +152,8 @@ func (h *lambdaHandler) Run(ctx context.Context, req request) (*response, error)
 	out := &response{
 		StatusCode: res.StatusCode,
 		Status:     res.Status,
-		Headers:    make(map[string]string, len(res.Header)),
 	}
-	for k, vv := range res.Header {
-		out.Headers[k] = strings.Join(vv, ",")
-	}
+	out.SetHeaders(&req, res)
 	if b := recorder.Body.Bytes(); utf8.Valid(b) {
 		out.Body = recorder.Body.String()
 	} else {
