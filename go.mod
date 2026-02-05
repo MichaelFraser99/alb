@@ -1,1 +1,1 @@
-module github.com/artyom/alb
+module github.com/MichaelFraser99/alb
