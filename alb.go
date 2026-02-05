@@ -24,7 +24,7 @@
 // json-encoded payloads, their sizes are limited. AWS documentation states
 // that: "The maximum size of the request body that you can send to a Lambda
 // function is 1 MB. [...] The maximum size of the response JSON that the Lambda
-// function can send is 1 MB." Exact limit of response size also depends on
+// function can send is 1 MB." The exact limit of response size also depends on
 // whether its body is valid utf8 or not, as non-utf8 payloads are transparently
 // base64-encoded, which adds some overhead.
 //
@@ -36,7 +36,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -44,10 +44,10 @@ import (
 	"unicode/utf8"
 )
 
-// Handler returns function suitable to use as an AWS Lambda handler with
+// Handler returns a function suitable to use as an AWS Lambda handler with
 // github.com/aws/aws-lambda-go/lambda package.
 //
-// Note that request is fully cached in memory.
+// Note that the request is fully cached in memory.
 func Handler(h http.Handler) func(context.Context, request) (*response, error) {
 	if h == nil {
 		panic("Wrap called with nil handler")
@@ -57,20 +57,23 @@ func Handler(h http.Handler) func(context.Context, request) (*response, error) {
 }
 
 type request struct {
-	Method      string            `json:"httpMethod"`
-	Path        string            `json:"path"`                  // escaped
-	Query       map[string]string `json:"queryStringParameters"` // escaped
-	Headers     map[string]string `json:"headers"`
-	Body        string            `json:"body"`
-	BodyEncoded bool              `json:"isBase64Encoded"`
+	Method            string              `json:"httpMethod"`
+	Path              string              `json:"path"`
+	Query             map[string]string   `json:"queryStringParameters"`
+	MultiValueQuery   map[string][]string `json:"multiValueQueryStringParameters"`
+	Headers           map[string]string   `json:"headers"`
+	MultiValueHeaders map[string][]string `json:"multiValueHeaders"`
+	Body              string              `json:"body"`
+	BodyEncoded       bool                `json:"isBase64Encoded"`
 }
 
 type response struct {
-	StatusCode  int               `json:"statusCode"`
-	Status      string            `json:"statusDescription"`
-	Headers     map[string]string `json:"headers"`
-	Body        string            `json:"body"`
-	BodyEncoded bool              `json:"isBase64Encoded"`
+	StatusCode        int                 `json:"statusCode"`
+	Status            string              `json:"statusDescription"`
+	Headers           map[string]string   `json:"headers"`
+	MultiValueHeaders map[string][]string `json:"multiValueHeaders"`
+	Body              string              `json:"body"`
+	BodyEncoded       bool                `json:"isBase64Encoded"`
 }
 
 type lambdaHandler struct {
@@ -102,10 +105,10 @@ func (h *lambdaHandler) Run(ctx context.Context, req request) (*response, error)
 		if err != nil {
 			return nil, err
 		}
-		r.Body = ioutil.NopCloser(bytes.NewReader(b))
+		r.Body = io.NopCloser(bytes.NewReader(b))
 		r.ContentLength = int64(len(b))
 	default:
-		r.Body = ioutil.NopCloser(strings.NewReader(req.Body))
+		r.Body = io.NopCloser(strings.NewReader(req.Body))
 		r.ContentLength = int64(len(req.Body))
 	}
 	recorder := httptest.NewRecorder()
