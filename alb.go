@@ -10,7 +10,7 @@
 //		"fmt"
 //		"net/http"
 //
-//		"github.com/artyom/alb"
+//		"github.com/MichaelFraser99/alb"
 //		"github.com/aws/aws-lambda-go/lambda"
 //	)
 //
@@ -39,6 +39,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"net/url"
 	"strings"
 	"unicode/utf8"
@@ -67,6 +68,28 @@ type request struct {
 	BodyEncoded       bool                `json:"isBase64Encoded"`
 }
 
+func (r *request) HeadersProvided() map[string][]string {
+	if r.MultiValueHeaders == nil {
+		container := make(map[string][]string, len(r.Headers))
+		for k, v := range r.Headers {
+			container[k] = []string{v}
+		}
+		return container
+	}
+	return r.MultiValueHeaders
+}
+
+func (r *request) QueryProvided() map[string][]string {
+	if r.MultiValueQuery == nil {
+		container := make(map[string][]string, len(r.Query))
+		for k, v := range r.Query {
+			container[k] = []string{v}
+		}
+		return container
+	}
+	return r.MultiValueQuery
+}
+
 type response struct {
 	StatusCode        int                 `json:"statusCode"`
 	Status            string              `json:"statusDescription"`
@@ -81,13 +104,14 @@ type lambdaHandler struct {
 }
 
 func (h *lambdaHandler) Run(ctx context.Context, req request) (*response, error) {
-	u, err := buildURL(req.Path, req.Query)
+	u, err := buildURL(req.Path, req.QueryProvided())
 	if err != nil {
 		return nil, err
 	}
+
 	headers := make(http.Header, len(req.Headers))
-	for k, v := range req.Headers {
-		headers.Set(k, v)
+	for k, v := range req.HeadersProvided() {
+		headers[textproto.CanonicalMIMEHeaderKey(k)] = v
 	}
 	r := &http.Request{
 		ProtoMajor: 1,
@@ -133,7 +157,7 @@ func (h *lambdaHandler) Run(ctx context.Context, req request) (*response, error)
 
 // buildURL constructs url from already escaped path and query string parameters
 // minimizing allocations and escaping overhead.
-func buildURL(path string, query map[string]string) (*url.URL, error) {
+func buildURL(path string, query map[string][]string) (*url.URL, error) {
 	if len(query) == 0 {
 		return url.Parse(path)
 	}
@@ -142,13 +166,15 @@ func buildURL(path string, query map[string]string) (*url.URL, error) {
 	b.WriteByte('?')
 	var i int
 	for k, v := range query {
-		if i != 0 {
-			b.WriteByte('&')
+		for _, vv := range v {
+			if i != 0 {
+				b.WriteByte('&')
+			}
+			b.WriteString(k)
+			b.WriteByte('=')
+			b.WriteString(vv)
+			i++
 		}
-		b.WriteString(k)
-		b.WriteByte('=')
-		b.WriteString(v)
-		i++
 	}
 	return url.Parse(b.String())
 }

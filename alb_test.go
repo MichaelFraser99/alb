@@ -32,7 +32,7 @@ func TestBuildURL(t *testing.T) {
 	tests := []struct {
 		name      string
 		path      string
-		query     map[string]string
+		query     map[string][]string
 		wantPath  string
 		wantQuery url.Values
 		wantErr   bool
@@ -46,27 +46,27 @@ func TestBuildURL(t *testing.T) {
 		{
 			name:     "empty query map",
 			path:     "/test",
-			query:    map[string]string{},
+			query:    map[string][]string{},
 			wantPath: "/test",
 		},
 		{
 			name:      "single query param",
 			path:      "/search",
-			query:     map[string]string{"q": "hello"},
+			query:     map[string][]string{"q": {"hello"}},
 			wantPath:  "/search",
 			wantQuery: url.Values{"q": {"hello"}},
 		},
 		{
 			name:      "multiple query params",
 			path:      "/filter",
-			query:     map[string]string{"page": "1", "limit": "10"},
+			query:     map[string][]string{"page": {"1"}, "limit": {"10"}},
 			wantPath:  "/filter",
 			wantQuery: url.Values{"page": {"1"}, "limit": {"10"}},
 		},
 		{
 			name:      "encoded query values",
 			path:      "/search",
-			query:     map[string]string{"q": "hello%20world"},
+			query:     map[string][]string{"q": {"hello%20world"}},
 			wantPath:  "/search",
 			wantQuery: url.Values{"q": {"hello world"}},
 		},
@@ -79,9 +79,23 @@ func TestBuildURL(t *testing.T) {
 		{
 			name:      "path with special chars",
 			path:      "/api/v1/users%2F123",
-			query:     map[string]string{"action": "view"},
+			query:     map[string][]string{"action": {"view"}},
 			wantPath:  "/api/v1/users%2F123",
 			wantQuery: url.Values{"action": {"view"}},
+		},
+		{
+			name:      "multi-value query param",
+			path:      "/filter",
+			query:     map[string][]string{"id": {"1", "2", "3"}},
+			wantPath:  "/filter",
+			wantQuery: url.Values{"id": {"1", "2", "3"}},
+		},
+		{
+			name:      "mixed single and multi-value params",
+			path:      "/search",
+			query:     map[string][]string{"q": {"test"}, "tags": {"go", "aws"}},
+			wantPath:  "/search",
+			wantQuery: url.Values{"q": {"test"}, "tags": {"go", "aws"}},
 		},
 	}
 
@@ -395,6 +409,75 @@ func TestLambdaHandler_Run(t *testing.T) {
 			wantBody:       "Hello, 世界! 🌍",
 			wantBodyBase64: false,
 		},
+		{
+			name: "multi-value query parameters",
+			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ids := r.URL.Query()["id"]
+				w.Write([]byte(strings.Join(ids, ",")))
+			}),
+			req: request{
+				Method:          "GET",
+				Path:            "/filter",
+				MultiValueQuery: map[string][]string{"id": {"1", "2", "3"}},
+			},
+			wantStatus: http.StatusOK,
+			wantBody:   "1,2,3",
+		},
+		{
+			name: "multi-value headers passed to handler",
+			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				accepts := r.Header.Values("Accept")
+				w.Write([]byte(strings.Join(accepts, ",")))
+			}),
+			req: request{
+				Method:            "GET",
+				Path:              "/headers",
+				MultiValueHeaders: map[string][]string{"Accept": {"text/html", "application/json"}},
+			},
+			wantStatus: http.StatusOK,
+			wantBody:   "text/html,application/json",
+		},
+		{
+			name: "multi-value query takes precedence over single",
+			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(r.URL.Query().Get("key")))
+			}),
+			req: request{
+				Method:          "GET",
+				Path:            "/query",
+				Query:           map[string]string{"key": "ignored"},
+				MultiValueQuery: map[string][]string{"key": {"multi-value"}},
+			},
+			wantStatus: http.StatusOK,
+			wantBody:   "multi-value",
+		},
+		{
+			name: "multi-value headers takes precedence over single",
+			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(r.Header.Get("X-Custom")))
+			}),
+			req: request{
+				Method:            "GET",
+				Path:              "/headers",
+				Headers:           map[string]string{"X-Custom": "ignored"},
+				MultiValueHeaders: map[string][]string{"X-Custom": {"multi-value"}},
+			},
+			wantStatus: http.StatusOK,
+			wantBody:   "multi-value",
+		},
+		{
+			name: "host from multi-value headers",
+			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(r.Host))
+			}),
+			req: request{
+				Method:            "GET",
+				Path:              "/host",
+				MultiValueHeaders: map[string][]string{"Host": {"multi.example.com"}},
+			},
+			wantStatus: http.StatusOK,
+			wantBody:   "multi.example.com",
+		},
 	}
 
 	for _, tt := range tests {
@@ -585,45 +668,57 @@ func TestResponse_StatusDescription(t *testing.T) {
 func TestBuildURL_QueryParameterValues(t *testing.T) {
 	tests := []struct {
 		name  string
-		query map[string]string
+		query map[string][]string
 		key   string
-		want  string
+		want  []string
 	}{
 		{
 			name:  "simple value",
-			query: map[string]string{"name": "john"},
+			query: map[string][]string{"name": {"john"}},
 			key:   "name",
-			want:  "john",
+			want:  []string{"john"},
 		},
 		{
 			name:  "encoded space",
-			query: map[string]string{"name": "john%20doe"},
+			query: map[string][]string{"name": {"john%20doe"}},
 			key:   "name",
-			want:  "john doe",
+			want:  []string{"john doe"},
 		},
 		{
 			name:  "encoded plus",
-			query: map[string]string{"query": "a%2Bb"},
+			query: map[string][]string{"query": {"a%2Bb"}},
 			key:   "query",
-			want:  "a+b",
+			want:  []string{"a+b"},
 		},
 		{
 			name:  "encoded ampersand",
-			query: map[string]string{"company": "a%26b"},
+			query: map[string][]string{"company": {"a%26b"}},
 			key:   "company",
-			want:  "a&b",
+			want:  []string{"a&b"},
 		},
 		{
 			name:  "encoded equals",
-			query: map[string]string{"expr": "x%3D5"},
+			query: map[string][]string{"expr": {"x%3D5"}},
 			key:   "expr",
-			want:  "x=5",
+			want:  []string{"x=5"},
 		},
 		{
 			name:  "empty value",
-			query: map[string]string{"flag": ""},
+			query: map[string][]string{"flag": {""}},
 			key:   "flag",
-			want:  "",
+			want:  []string{""},
+		},
+		{
+			name:  "multiple values",
+			query: map[string][]string{"id": {"1", "2", "3"}},
+			key:   "id",
+			want:  []string{"1", "2", "3"},
+		},
+		{
+			name:  "multiple encoded values",
+			query: map[string][]string{"q": {"hello%20world", "foo%26bar"}},
+			key:   "q",
+			want:  []string{"hello world", "foo&bar"},
 		},
 	}
 
@@ -633,9 +728,9 @@ func TestBuildURL_QueryParameterValues(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			got := u.Query().Get(tt.key)
-			if got != tt.want {
-				t.Errorf("Query[%q] = %q, want %q", tt.key, got, tt.want)
+			got := u.Query()[tt.key]
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Query[%q] = %v, want %v", tt.key, got, tt.want)
 			}
 		})
 	}
@@ -688,55 +783,76 @@ func TestLambdaHandler_LargeBody(t *testing.T) {
 
 func TestLambdaHandler_HeaderCanonicalization(t *testing.T) {
 	tests := []struct {
-		name       string
-		headerKey  string
-		headerVal  string
-		lookupKey  string
-		wantValue  string
+		name              string
+		headers           map[string]string
+		multiValueHeaders map[string][]string
+		lookupKey         string
+		wantValue         string
+		wantValues        []string
 	}{
 		{
 			name:       "lowercase header",
-			headerKey:  "content-type",
-			headerVal:  "application/json",
+			headers:    map[string]string{"content-type": "application/json"},
 			lookupKey:  "Content-Type",
 			wantValue:  "application/json",
+			wantValues: []string{"application/json"},
 		},
 		{
 			name:       "uppercase header",
-			headerKey:  "CONTENT-TYPE",
-			headerVal:  "text/plain",
+			headers:    map[string]string{"CONTENT-TYPE": "text/plain"},
 			lookupKey:  "Content-Type",
 			wantValue:  "text/plain",
+			wantValues: []string{"text/plain"},
 		},
 		{
 			name:       "mixed case header",
-			headerKey:  "X-Custom-Header",
-			headerVal:  "custom",
+			headers:    map[string]string{"X-Custom-Header": "custom"},
 			lookupKey:  "X-Custom-Header",
 			wantValue:  "custom",
+			wantValues: []string{"custom"},
+		},
+		{
+			name:              "multi-value lowercase header",
+			multiValueHeaders: map[string][]string{"accept": {"text/html", "application/json"}},
+			lookupKey:         "Accept",
+			wantValue:         "text/html",
+			wantValues:        []string{"text/html", "application/json"},
+		},
+		{
+			name:              "multi-value uppercase header",
+			multiValueHeaders: map[string][]string{"ACCEPT-ENCODING": {"gzip", "deflate"}},
+			lookupKey:         "Accept-Encoding",
+			wantValue:         "gzip",
+			wantValues:        []string{"gzip", "deflate"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var gotValue string
+			var gotValues []string
 			h := &lambdaHandler{
 				handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					gotValue = r.Header.Get(tt.lookupKey)
+					gotValues = r.Header.Values(tt.lookupKey)
 					w.WriteHeader(http.StatusOK)
 				}),
 			}
 
 			_, err := h.Run(context.Background(), request{
-				Method:  "GET",
-				Path:    "/",
-				Headers: map[string]string{tt.headerKey: tt.headerVal},
+				Method:            "GET",
+				Path:              "/",
+				Headers:           tt.headers,
+				MultiValueHeaders: tt.multiValueHeaders,
 			})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if gotValue != tt.wantValue {
-				t.Errorf("Header[%q] = %q, want %q", tt.lookupKey, gotValue, tt.wantValue)
+				t.Errorf("Header.Get(%q) = %q, want %q", tt.lookupKey, gotValue, tt.wantValue)
+			}
+			if !reflect.DeepEqual(gotValues, tt.wantValues) {
+				t.Errorf("Header.Values(%q) = %v, want %v", tt.lookupKey, gotValues, tt.wantValues)
 			}
 		})
 	}
@@ -771,5 +887,118 @@ func TestLambdaHandler_ResponseHeadersInitialized(t *testing.T) {
 	}
 	if resp.Headers == nil {
 		t.Error("expected Headers to be initialized, got nil")
+	}
+}
+
+func TestRequest_HeadersProvided(t *testing.T) {
+	tests := []struct {
+		name              string
+		headers           map[string]string
+		multiValueHeaders map[string][]string
+		want              map[string][]string
+	}{
+		{
+			name:    "nil multi-value uses single-value headers",
+			headers: map[string]string{"Content-Type": "application/json", "Accept": "text/plain"},
+			want:    map[string][]string{"Content-Type": {"application/json"}, "Accept": {"text/plain"}},
+		},
+		{
+			name:              "multi-value headers takes precedence",
+			headers:           map[string]string{"X-Single": "ignored"},
+			multiValueHeaders: map[string][]string{"X-Multi": {"val1", "val2"}},
+			want:              map[string][]string{"X-Multi": {"val1", "val2"}},
+		},
+		{
+			name:              "empty multi-value returns multi-value",
+			headers:           map[string]string{"X-Header": "value"},
+			multiValueHeaders: map[string][]string{},
+			want:              map[string][]string{},
+		},
+		{
+			name:    "empty single-value headers",
+			headers: map[string]string{},
+			want:    map[string][]string{},
+		},
+		{
+			name: "nil single-value headers",
+			want: map[string][]string{},
+		},
+		{
+			name:              "multi-value with multiple values per key",
+			multiValueHeaders: map[string][]string{"Accept": {"text/html", "application/json", "text/plain"}},
+			want:              map[string][]string{"Accept": {"text/html", "application/json", "text/plain"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &request{
+				Headers:           tt.headers,
+				MultiValueHeaders: tt.multiValueHeaders,
+			}
+			got := r.HeadersProvided()
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("HeadersProvided() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRequest_QueryProvided(t *testing.T) {
+	tests := []struct {
+		name            string
+		query           map[string]string
+		multiValueQuery map[string][]string
+		want            map[string][]string
+	}{
+		{
+			name:  "nil multi-value uses single-value query",
+			query: map[string]string{"page": "1", "limit": "10"},
+			want:  map[string][]string{"page": {"1"}, "limit": {"10"}},
+		},
+		{
+			name:            "multi-value query takes precedence",
+			query:           map[string]string{"ignored": "value"},
+			multiValueQuery: map[string][]string{"tags": {"go", "aws", "lambda"}},
+			want:            map[string][]string{"tags": {"go", "aws", "lambda"}},
+		},
+		{
+			name:            "empty multi-value returns multi-value",
+			query:           map[string]string{"key": "value"},
+			multiValueQuery: map[string][]string{},
+			want:            map[string][]string{},
+		},
+		{
+			name:  "empty single-value query",
+			query: map[string]string{},
+			want:  map[string][]string{},
+		},
+		{
+			name: "nil single-value query",
+			want: map[string][]string{},
+		},
+		{
+			name:            "multi-value with multiple values per key",
+			multiValueQuery: map[string][]string{"id": {"1", "2", "3", "4"}},
+			want:            map[string][]string{"id": {"1", "2", "3", "4"}},
+		},
+		{
+			name:            "mixed keys in multi-value",
+			multiValueQuery: map[string][]string{"a": {"1"}, "b": {"2", "3"}, "c": {"4", "5", "6"}},
+			want:            map[string][]string{"a": {"1"}, "b": {"2", "3"}, "c": {"4", "5", "6"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &request{
+				Query:           tt.query,
+				MultiValueQuery: tt.multiValueQuery,
+			}
+			got := r.QueryProvided()
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("QueryProvided() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
