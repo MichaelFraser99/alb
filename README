@@ -10,7 +10,7 @@ Usage example:
     	"fmt"
     	"net/http"
 
-    	"github.com/artyom/alb"
+    	"github.com/MichaelFraser99/alb"
     	"github.com/aws/aws-lambda-go/lambda"
     )
 
